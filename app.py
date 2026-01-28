@@ -3,39 +3,38 @@ import pandas as pd
 import io
 import re
 
-def process_dominio_logic(df):
-    """Aplica as regras da Mariana em um DataFrame já extraído do Excel"""
+def aplicar_regras_mariana(df):
+    """Aplica a lógica de IDs e Percentuais no DataFrame extraído"""
     processed_rows = []
     current_percent = None
     
-    # Transformamos o DataFrame em lista de listas para processar linha a linha
+    # Converte para lista de listas para manter a fidelidade do processamento
     data = df.values.tolist()
     
     for row in data:
-        # Converte tudo para string e limpa espaços
+        # Limpa cada célula e converte para string
         parts = [str(item).strip() if pd.notna(item) else "" for item in row]
-        line_full = " ".join(parts)
+        line_content = " ".join(parts)
         
-        # 1. Identifica o Percentual
-        if "Percentual de recolhimento efetivo:" in line_full:
-            match = re.search(r"(\d+\.?\d*)", line_full)
+        # 1. Identifica Percentual
+        if "Percentual de recolhimento efetivo:" in line_content:
+            match = re.search(r"(\d+\.?\d*)", line_content)
             if match:
                 current_percent = match.group(1)
             processed_rows.append(parts)
             continue
 
-        # 2. Processa linhas de Produtos (Hierarquia Fiscal)
+        # 2. Processa Itens (Hierarquia Fiscal)
         try:
-            # Verifica se a primeira coluna parece uma data/número da Domínio
-            # O Excel converte datas em números (ex: 46024.0)
-            val_0 = parts[0].replace('.0', '')
-            if val_0.isdigit() and float(val_0) > 40000 and len(parts) > 10:
-                doc = parts[1].replace('.0', '') # Remove o .0 do número da nota
+            # Verifica se a primeira coluna é uma data/número da Domínio
+            val_0 = parts[0].split('.')[0] # Pega só o inteiro antes do ponto
+            if val_0.isdigit() and int(val_0) > 40000 and len(parts) > 10:
+                doc = parts[1].split('.')[0]
                 prod_desc = parts[10]
                 
-                # Criando o ID: Documento-Produto (Coluna G / Índice 6)
+                # Criando ID: Doc-Produto (Índice 6)
                 parts[6] = f"{doc}-{prod_desc}"
-                # Inserindo o Percentual (Coluna H / Índice 7)
+                # Inserindo Percentual (Índice 7)
                 parts[7] = current_percent if current_percent else ""
                 
                 processed_rows.append(parts)
@@ -43,8 +42,8 @@ def process_dominio_logic(df):
         except (ValueError, IndexError):
             pass
 
-        # 3. Totais e Outras Linhas
-        if "Total:" in line_full or "DÉBITOS PELAS SAÍDAS" in line_full:
+        # 3. Totais e Cabeçalhos
+        if "Total:" in line_content or "DÉBITOS PELAS SAÍDAS" in line_content:
             if len(parts) > 7:
                 parts[5] = "-"
                 parts[7] = current_percent if current_percent else ""
@@ -52,37 +51,54 @@ def process_dominio_logic(df):
         else:
             processed_rows.append(parts)
             
-    # Converte de volta para CSV
-    output_df = pd.DataFrame(processed_rows)
-    return output_df.to_csv(index=False, header=False)
+    return pd.DataFrame(processed_rows)
 
-# --- Interface ---
+# --- Interface Streamlit ---
 st.set_page_config(page_title="Conversor RET Domínio", layout="wide")
-st.title("📊 Conversor RET - Formato Binário (XLS)")
+st.title("🚀 Conversor RET Domínio (Versão Suprema)")
 
-uploaded_file = st.file_uploader("Suba o arquivo .xls gerado pela Domínio", type=["xls"])
+file = st.file_uploader("Suba o arquivo original da Domínio", type=None)
 
-if uploaded_file is not None:
+if file:
+    df_raw = None
+    bytes_data = file.getvalue()
+    
+    # TESTE 1: Tenta como HTML/XML (O "falso" XLS da Domínio)
     try:
-        # Lê o arquivo binário direto usando xlrd (específico para esse erro que deu)
-        # engine='xlrd' é o segredo para arquivos que começam com ÐÏà¡±
-        df_raw = pd.read_excel(uploaded_file, engine='xlrd', header=None)
-        
-        # Processa com a lógica da Mariana
-        result_csv = process_dominio_logic(df_raw)
-        
-        st.success("✅ Arquivo binário convertido com sucesso!")
-        
-        st.download_button(
-            label="📥 Baixar CSV para Python",
-            data=result_csv,
-            file_name=f"CONVERTIDO_{uploaded_file.name.replace('.xls', '.csv')}",
-            mime="text/csv"
-        )
-        
-        st.write("### 🔍 Prévia dos dados convertidos")
-        st.dataframe(df_raw.head(20)) # Mostra como o Python está "enxergando" o Excel
+        df_raw = pd.read_html(io.BytesIO(bytes_data))[0]
+    except:
+        # TESTE 2: Tenta como Excel Moderno
+        try:
+            df_raw = pd.read_excel(io.BytesIO(bytes_data), engine='openpyxl')
+        except:
+            # TESTE 3: Tenta como Excel Antigo (com engine manual)
+            try:
+                df_raw = pd.read_excel(io.BytesIO(bytes_data), engine='xlrd')
+            except:
+                # TESTE 4: Tenta como CSV Puro
+                try:
+                    df_raw = pd.read_csv(io.BytesIO(bytes_data), sep=None, engine='python')
+                except Exception as e:
+                    st.error(f"Não consegui decifrar esse arquivo. Erro: {e}")
 
-    except Exception as e:
-        st.error(f"Erro ao ler o Excel binário: {e}")
-        st.info("O arquivo parece ser um XLS antigo. Certifique-se de que o 'xlrd' está no requirements.txt.")
+    if df_raw is not None:
+        try:
+            # Aplica as regras de negócio
+            df_final = aplicar_regras_mariana(df_raw)
+            
+            st.success("✅ Arquivo decifrado e processado com as regras fiscais!")
+            
+            # Botão de Download
+            csv_final = df_final.to_csv(index=False, header=False)
+            st.download_button(
+                label="📥 Baixar CSV para Python",
+                data=csv_final,
+                file_name=f"PYTHON_{file.name}.csv",
+                mime="text/csv"
+            )
+            
+            st.write("### 🔍 Prévia dos Dados:")
+            st.dataframe(df_final.head(30))
+            
+        except Exception as e:
+            st.error(f"Erro na aplicação das regras: {e}")
