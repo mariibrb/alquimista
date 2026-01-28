@@ -33,8 +33,7 @@ def aplicar_estilo_sentinela_zonas():
             box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
         }
 
-        /* 3. ZONA ROSA (AUDITORIA - MÓDULO ATIVO) */
-        /* Como estamos no módulo de Auditoria, aplicamos a Zona Rosa */
+        /* 3. ZONA ROSA (AUDITORIA) */
         .stApp { 
             background: radial-gradient(circle at top right, #FFDEEF 0%, #F8F9FA 100%) !important; 
         }
@@ -46,7 +45,6 @@ def aplicar_estilo_sentinela_zonas():
             padding: 30px !important;
         }
 
-        /* Botões dentro do Uploader e de Download com a cor Rosa Auditor */
         [data-testid="stFileUploader"] section button, 
         div.stDownloadButton > button {
             background-color: #FF69B4 !important; 
@@ -57,7 +55,6 @@ def aplicar_estilo_sentinela_zonas():
             box-shadow: 0 0 15px rgba(255, 105, 180, 0.4) !important;
         }
 
-        /* Títulos e Textos */
         h1 {
             font-family: 'Montserrat', sans-serif;
             font-weight: 800;
@@ -72,9 +69,6 @@ st.set_page_config(page_title="Sentinela RET - Auditoria", layout="wide")
 aplicar_estilo_sentinela_zonas()
 
 def processar_relatorio_dominio_ret(file_buffer):
-    """
-    MANTÉM TODA A LÓGICA ORIGINAL INTACTA (Concatenação G, Réplica I, Produto K)
-    """
     try:
         df = pd.read_csv(file_buffer, sep=';', encoding='latin-1', dtype=str, header=None)
     except Exception:
@@ -113,8 +107,21 @@ def processar_relatorio_dominio_ret(file_buffer):
 
     df_final = pd.DataFrame(linhas_finais)
     output = io.BytesIO()
+    
+    # SALVAMENTO COM AJUSTE DE COLUNAS
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_final.to_excel(writer, index=False, header=False, sheet_name='RET_Auditado')
+        workbook = writer.book
+        worksheet = writer.sheets['RET_Auditado']
+        format_texto = workbook.add_format({'align': 'left'})
+        
+        # Aplicando as larguras para facilitar sua leitura manual depois
+        total_cols = len(df_final.columns)
+        if total_cols > 10:
+            worksheet.set_column(6, 6, 35, format_texto)   # Coluna G (Concatenação)
+            worksheet.set_column(8, 8, 12, format_texto)   # Coluna I (Alíquota)
+            worksheet.set_column(10, 10, 45, format_texto) # Coluna K (Produto)
+            
     return output.getvalue()
 
 # --- ÁREA VISUAL ---
@@ -123,11 +130,14 @@ st.title("CONVERSOR - DEMONSTRATIVO DE CRÉDITO PRESUMIDO")
 upped_file = st.file_uploader("Arraste o CSV aqui para auditar", type=["csv"])
 
 if upped_file is not None:
-    excel_out = processar_relatorio_dominio_ret(upped_file)
-    st.success("✅ Conversão concluída com sucesso!")
-    st.download_button(
-        label="📥 BAIXAR EXCEL AJUSTADO",
-        data=excel_out,
-        file_name="RET_Auditoria_Sentinela.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    # Usei o botão de processamento para você ter controle de quando iniciar
+    if st.button("🚀 INICIAR CONVERSÃO"):
+        with st.spinner("Processando..."):
+            excel_out = processar_relatorio_dominio_ret(upped_file)
+            st.success("✅ Conversão concluída com sucesso!")
+            st.download_button(
+                label="📥 BAIXAR EXCEL AJUSTADO",
+                data=excel_out,
+                file_name="RET_Auditoria_Sentinela.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
