@@ -5,8 +5,8 @@ import re
 
 def processar_relatorio_dominio_ret(file_buffer):
     """
-    Processa o RET inserindo uma nova coluna de concatenação antes do produto.
-    Mantém o produto original intacto, agora deslocado uma coluna para a direita.
+    Processa o RET usando a Coluna H (vazia) para a concatenação,
+    mantendo o layout original sem criar novas colunas.
     """
     try:
         df = pd.read_csv(file_buffer, sep=';', encoding='latin-1', dtype=str, header=None)
@@ -23,7 +23,7 @@ def processar_relatorio_dominio_ret(file_buffer):
         linha = row.tolist()
         linha_texto = " ".join([str(x) for x in linha if pd.notna(x)])
 
-        # 1. IDENTIFICAÇÃO DO PERCENTUAL (Mesma lógica anterior)
+        # 1. IDENTIFICAÇÃO DO PERCENTUAL E DA COLUNA (Geralmente Índice 8/Coluna I)
         if "Percentual de recolhimento efetivo" in linha_texto:
             for i, celula in enumerate(linha):
                 if pd.notna(celula):
@@ -33,31 +33,22 @@ def processar_relatorio_dominio_ret(file_buffer):
                         col_index_aliquota = i
                         break
 
-        # 2. PROCESSAMENTO DAS LINHAS DE DADOS
+        # 2. PROCESSAMENTO DAS LINHAS DE DADOS (Identificadas por data na Coluna A)
         primeira_celula = str(linha[0]).strip()
         if len(primeira_celula) >= 8 and primeira_celula[0:2].isdigit() and "/" in primeira_celula:
             
-            # A) REPLICAÇÃO DA ALÍQUOTA
+            # A) REPLICAÇÃO DA ALÍQUOTA (Coluna I / Índice 8)
             if percentual_atual and col_index_aliquota is not None:
                 if len(linha) > col_index_aliquota:
                     linha[col_index_aliquota] = percentual_atual
 
-            # B) CONCATENAÇÃO E INSERÇÃO DE COLUNA
-            # Pegamos B (Índice 1) e o Produto (Índice 10)
+            # B) CONCATENAÇÃO NA COLUNA H (Índice 7) - Usando a coluna vazia existente
             if len(linha) > 10:
                 valor_b = str(linha[1]) if pd.notna(linha[1]) and str(linha[1]) != "nan" else ""
                 valor_produto = str(linha[10]) if pd.notna(linha[10]) and str(linha[10]) != "nan" else ""
                 
-                resultado_concat = f"{valor_b} - {valor_produto}".strip(" -")
-                
-                # INSERE a concatenação na posição 10. 
-                # O produto que estava na 10 vira 11 automaticamente.
-                linha.insert(10, resultado_concat)
-        else:
-            # Para linhas que não são de dados (cabeçalhos), 
-            # inserimos uma célula vazia para manter o alinhamento das colunas
-            if len(linha) > 10:
-                linha.insert(10, "")
+                # Preenche a Coluna H (Índice 7) que estava vazia
+                linha[7] = f"{valor_b} - {valor_produto}".strip(" -")
 
         linhas_finais.append(linha)
 
@@ -71,10 +62,10 @@ def processar_relatorio_dominio_ret(file_buffer):
         format_texto = workbook.add_format({'align': 'left'})
         
         total_cols = len(df_final.columns)
-        if total_cols > 11:
+        if total_cols > 10:
             worksheet.set_column(0, total_cols - 1, 12, format_texto)
-            worksheet.set_column(10, 10, 30, format_texto) # Coluna da Concatenação
-            worksheet.set_column(11, 11, 45, format_texto) # Coluna do Produto (Intacta)
+            worksheet.set_column(7, 7, 30, format_texto)  # Coluna H (Concatenação)
+            worksheet.set_column(10, 10, 45, format_texto) # Coluna K (Produto intacto)
 
     return output.getvalue()
 
@@ -85,14 +76,14 @@ st.title("Relatório de Crédito Presumido - RET")
 upped_file = st.file_uploader("Arraste o CSV nº 4 aqui", type=["csv"])
 
 if upped_file is not None:
-    with st.spinner("Inserindo coluna e processando..."):
+    with st.spinner("Processando na Coluna H..."):
         try:
             excel_out = processar_relatorio_dominio_ret(upped_file)
-            st.success("Boooooa! Agora a concatenação está antes e o produto continua igual.")
+            st.success("Perfeito! Concatenação na Coluna H e alíquota na Coluna I.")
             st.download_button(
-                label="📥 Baixar Excel com Nova Coluna",
+                label="📥 Baixar Excel Otimizado",
                 data=excel_out,
-                file_name="RET_Dominio_Colunas_Ajustadas.xlsx",
+                file_name="RET_Dominio_Final_H_I.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
