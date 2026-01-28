@@ -4,47 +4,45 @@ import io
 import re
 
 def process_dominio_ret(file):
-    # Lendo o arquivo cru (convertendo bytes para string)
-    string_data = file.getvalue().decode("utf-8")
+    # Lendo o conteúdo do arquivo
+    # Usamos o 'bytes.decode' com 'replace' para evitar erros de caracteres especiais (comuns em arquivos da Domínio)
+    try:
+        string_data = file.getvalue().decode("utf-8")
+    except UnicodeDecodeError:
+        string_data = file.getvalue().decode("latin-1")
+    
     lines = string_data.split('\n')
     
     processed_lines = []
     current_percent = None
     
-    # Cabeçalhos identificados na aba Python
-    header_cols = [
-        "Data", "Documento", "Col3", "Col4", "Col5", "Acumulador", 
-        "Documento-Produto", "Percentual_Rec", "CFOP", "Col10", 
-        "Produto", "Col12", "Tipo_Produto", "Col14", "Valor_Produto", 
-        "Valor_Contabil", "Base_Calculo", "Isentas", "Col19", "Col20", 
-        "Col21", "Valor_ICMS"
-    ]
-
     for line in lines:
+        # Remove quebras de linha residuais
+        line = line.replace('\r', '')
         parts = line.split(',')
-        # Limpeza básica de espaços
+        
+        # Limpeza básica de espaços em cada campo
         parts = [p.strip() for p in parts]
         
         # 1. Identifica e captura o Percentual de recolhimento atual
         if "Percentual de recolhimento efetivo:" in line:
-            # Tenta encontrar o número (1.3, 6.0, 14.0, etc)
             match = re.search(r"(\d+\.?\d*)", line)
             if match:
                 current_percent = match.group(1)
-            processed_lines.append(line) # Mantém a linha original conforme aba Python
+            processed_lines.append(line)
             continue
 
-        # 2. Processa linhas de dados (que começam com data/número e tem CFOP na posição 9/10)
-        # Verificando se a linha parece ser de um produto (ex: começa com 46024.0)
+        # 2. Processa linhas de dados (Produtos)
+        # Verifica se a primeira coluna é uma data/número e se a linha tem colunas suficientes
         try:
             if parts[0] and float(parts[0]) > 40000 and len(parts) > 10:
                 doc = parts[1]
                 prod_desc = parts[10]
                 
-                # Criando o ID: Documento-Produto (Coluna G/6)
+                # Criando o ID: Documento-Produto (Coluna G / Índice 6)
                 parts[6] = f"{doc}-{prod_desc}"
                 
-                # Inserindo o Percentual na Coluna H/7
+                # Inserindo o Percentual na Coluna H / Índice 7
                 parts[7] = current_percent if current_percent else ""
                 
                 processed_lines.append(",".join(parts))
@@ -52,53 +50,71 @@ def process_dominio_ret(file):
         except (ValueError, IndexError):
             pass
 
-        # 3. Tratamento especial para linhas de Total ou Cabeçalhos repetidos
+        # 3. Tratamento para linhas de Total ou Cabeçalhos de seção
         if "Total:" in line or "DÉBITOS PELAS SAÍDAS" in line:
-            # Na aba Python, as linhas de Total também ganham o marcador '-' e o percentual
             if len(parts) > 7:
                 parts[5] = "-"
                 parts[7] = current_percent if current_percent else ""
             processed_lines.append(",".join(parts))
         else:
-            # Mantém as outras linhas (Cabeçalhos, Resumos de Apuração) como estão
+            # Mantém as outras linhas (Cabeçalhos do sistema, Resumos de Apuração)
             processed_lines.append(line)
 
     return "\n".join(processed_lines)
 
-# Interface Streamlit
-st.set_page_config(page_title="Conversor RET Domínio", layout="wide")
+# --- Interface Streamlit ---
+st.set_page_config(page_title="Conversor RET Domínio", layout="wide", page_icon="📊")
 
 st.title("📂 Conversor Relatório RET - Domínio Sistemas")
 st.markdown("""
-Este conversor automatiza a preparação do relatório de Crédito Presumido para análise em Python.
-* **Adiciona ID único:** `Documento-Produto`
-* **Replica o Percentual:** Em todas as linhas de itens.
-* **Preserva a estrutura:** Mantém os blocos de apuração fiscal.
+### Instruções:
+1. Extraia o relatório **Crédito Presumido (3 - Apuração 1)** do sistema Domínio em formato **CSV**.
+2. Arraste o arquivo abaixo para formatar as chaves de busca e percentuais.
 """)
 
-uploaded_file = st.file_uploader("Arraste o arquivo .csv extraído da Domínio aqui", type=["csv"])
+# Ajuste aqui: Aceitando CSV mesmo que o Windows/Excel o identifique como Excel
+uploaded_file = st.file_uploader(
+    "Selecione o arquivo CSV extraído", 
+    type=["csv"], 
+    accept_multiple_files=False
+)
 
 if uploaded_file is not None:
     try:
-        # Processamento
-        result_csv = process_dominio_ret(uploaded_file)
+        with st.spinner('Processando regras fiscais...'):
+            result_csv = process_dominio_ret(uploaded_file)
         
-        st.success("Arquivo processado com sucesso!")
+        st.success("✅ Arquivo processado com sucesso!")
         
-        # Botão de Download
-        st.download_button(
-            label="📥 Baixar Arquivo para Python",
-            data=result_csv,
-            file_name=f"PROCESSADO_{uploaded_file.name}",
-            mime="text/csv",
+        # Colunas para os botões e informações
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.download_button(
+                label="📥 Baixar Arquivo para Python (CSV)",
+                data=result_csv,
+                file_name=f"PYTHON_{uploaded_file.name}",
+                mime="text/csv",
+            )
+            
+        with col2:
+            if st.button("Limpar cache"):
+                st.rerun()
+
+        st.divider()
+        
+        # Visualização Prévia para conferência da Mariana
+        st.subheader("🔍 Prévia dos dados (Visualização em Bloco)")
+        st.text_area(
+            label="As primeiras linhas processadas aparecerão aqui:",
+            value=result_csv[:3000],
+            height=400
         )
-        
-        # Visualização prévia (Primeiras 50 linhas para conferência visual)
-        with st.expander("Visualizar prévia dos dados processados"):
-            st.text(result_csv[:5000]) # Mostra o início do arquivo
 
     except Exception as e:
-        st.error(f"Erro ao processar o arquivo: {e}")
+        st.error(f"Ocorreu um erro no processamento: {e}")
+        st.info("Verifique se o arquivo enviado é realmente o CSV separado por vírgulas.")
 
-st.divider()
-st.info("💡 Dica: O arquivo gerado segue rigorosamente o padrão de IDs e repetição de percentuais que você aprovou.")
+st.sidebar.markdown("---")
+st.sidebar.write("📌 **Status do Projeto:**")
+st.sidebar.info("Conversor configurado para respeitar a hierarquia fiscal da Domínio e gerar IDs únicos de Documento + Produto.")
