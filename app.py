@@ -138,6 +138,6 @@ if upped_file is not None:
             st.download_button(
                 label="📥 BAIXAR EXCEL AJUSTADO",
                 data=excel_out,
-                file_name="RET_Auditoria_Sentinela.xlsx",
+                file_name="RET_Crédito Presumido.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
