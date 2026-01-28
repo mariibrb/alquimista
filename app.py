@@ -3,119 +3,92 @@ import pandas as pd
 import io
 import re
 
-def robust_read(file):
-    """Tenta ler o arquivo da Domínio de várias formas diferentes."""
-    content = file.getvalue()
-    
-    # 1. Tenta como Excel antigo (XLS)
+def processar_ret_dominio(file):
+    # Lendo o CSV da Domínio (usando latin-1 pois arquivos fiscais costumam ter acentos)
     try:
-        return pd.read_excel(io.BytesIO(content), engine='xlrd', header=None)
-    except: pass
+        content = file.getvalue().decode('utf-8')
+    except:
+        content = file.getvalue().decode('latin-1')
         
-    # 2. Tenta como Excel moderno (XLSX)
-    try:
-        return pd.read_excel(io.BytesIO(content), engine='openpyxl', header=None)
-    except: pass
-
-    # 3. Tenta como HTML (Muitos XLS da Domínio são na verdade HTML)
-    try:
-        dfs = pd.read_html(io.BytesIO(content))
-        if dfs: return dfs[0]
-    except: pass
-
-    # 4. Tenta como CSV (Auto-detectando o separador , ou ;)
-    for enc in ['utf-8', 'latin-1', 'cp1252']:
-        try:
-            text = content.decode(enc)
-            return pd.read_csv(io.StringIO(text), sep=None, engine='python', header=None)
-        except: continue
-        
-    return None
-
-def transform_data(df):
-    """Aplica as regras da Mariana: ID Único e Percentual."""
-    if df is None: return None
-    
-    # Converte tudo para string para evitar erros de tipagem
-    data = df.astype(str).values.tolist()
+    lines = content.split('\n')
     processed_rows = []
     current_percent = ""
-    
-    for row in data:
-        # Limpeza básica (remove 'nan' e espaços extras)
-        row = [x.strip() if x != "nan" else "" for x in row]
-        line_str = " ".join(row)
-        
-        # 1. Captura o percentual vigente (Ex: 1.3, 6.0, 14.0)
+
+    for line in lines:
+        # Divide por vírgula (padrão do CSV que você enviou)
+        parts = line.split(',')
+        parts = [p.strip() for p in parts]
+        line_str = " ".join(parts)
+
+        # 1. Captura o Percentual de Recolhimento (Lógica Visual)
         if "Percentual de recolhimento efetivo:" in line_str:
             match = re.search(r"(\d+[\.,]\d+)", line_str)
             if match:
                 current_percent = match.group(1).replace(',', '.')
-            processed_rows.append(row)
+            processed_rows.append(parts)
             continue
-            
-        # 2. Processa linhas de dados (Produtos)
-        # Identificamos pelo número de data do Excel (> 40000) na primeira coluna
+
+        # 2. Identifica Linhas de Itens (Data no formato Excel ex: 46024.0)
         try:
-            val_0 = row[0].replace('.0', '')
-            if val_0.isdigit() and int(val_0) > 40000:
-                doc = row[1].replace('.0', '')
-                produto = row[10]
+            # Verifica se a primeira coluna é um número de data
+            if parts[0].replace('.0', '').isdigit() and float(parts[0]) > 40000:
+                doc = parts[1].replace('.0', '')
+                produto = parts[10]
                 
-                # Garante que a linha tenha colunas suficientes
-                while len(row) < 22: row.append("")
+                # Garante que a linha tenha colunas suficientes para o seu padrão
+                while len(parts) < 22: parts.append("")
                 
-                # Aplica as suas regras:
-                row[6] = f"{doc}-{produto}" # Coluna G: ID (Doc-Produto)
-                row[7] = current_percent     # Coluna H: Percentual
+                # REGRAS DA MARIANA:
+                # Coluna G (índice 6): ID Único (Documento-Produto)
+                parts[6] = f"{doc}-{produto}"
+                # Coluna H (índice 7): Percentual replicado
+                parts[7] = current_percent
                 
-                processed_rows.append(row)
+                processed_rows.append(parts)
                 continue
-        except: pass
-            
-        # 3. Trata linhas de Total (coloca o '-' e o percentual)
+        except:
+            pass
+
+        # 3. Tratamento de Totais (Adiciona o '-' e o % conforme seu modelo)
         if "Total:" in line_str or "Total saídas:" in line_str:
-            while len(row) < 22: row.append("")
-            row[5] = "-"
-            row[7] = current_percent
-            processed_rows.append(row)
+            while len(parts) < 22: parts.append("")
+            parts[5] = "-"
+            parts[7] = current_percent
+            processed_rows.append(parts)
         else:
-            processed_rows.append(row)
-            
+            processed_rows.append(parts)
+
     return pd.DataFrame(processed_rows)
 
-# Interface do App
-st.set_page_config(page_title="Conversor RET Domínio", layout="wide", page_icon="📊")
+# --- Interface Streamlit ---
+st.set_page_config(page_title="Conversor RET Domínio", layout="wide", page_icon="📝")
 
-st.title("📊 Conversor Regime Especial (RET) - Domínio Sistemas")
-st.markdown("""
-Suba o arquivo original extraído do sistema. O conversor irá criar as chaves de busca e 
-organizar os percentuais automaticamente para o seu uso em Python.
-""")
+st.title("📝 Conversor RET - Domínio Sistemas")
+st.markdown(f"**Analista:** Mariana | **Empresa:** Nascel Contabilidade")
 
-uploaded_file = st.file_uploader("Arraste o arquivo original (XLS ou CSV)", type=None)
+uploaded_file = st.file_uploader("Suba o arquivo CSV extraído da Domínio", type=['csv'])
 
 if uploaded_file:
-    with st.spinner('Processando arquivo...'):
-        df_raw = robust_read(uploaded_file)
+    with st.spinner('Transformando dados para o padrão Python...'):
+        df_final = processar_ret_dominio(uploaded_file)
         
-        if df_raw is not None:
-            df_final = transform_data(df_raw)
-            
+        if not df_final.empty:
             st.success("✅ Arquivo processado com sucesso!")
             
-            # Preparação para download
-            csv_buffer = io.StringIO()
-            df_final.to_csv(csv_buffer, index=False, header=False)
-            
+            # Preparação do Download
+            csv_ready = df_final.to_csv(index=False, header=False)
             st.download_button(
-                label="📥 Baixar Arquivo Convertido (CSV)",
-                data=csv_buffer.getvalue(),
-                file_name=f"convertido_{uploaded_file.name}.csv",
+                label="📥 Baixar CSV Convertido",
+                data=csv_ready,
+                file_name=f"PYTHON_{uploaded_file.name}",
                 mime="text/csv"
             )
             
-            st.write("### 🔍 Prévia dos dados (Visualização)")
+            st.divider()
+            st.write("### 🔍 Conferência da Estrutura (Aba Python)")
+            # Mostra as colunas principais para você conferir visualmente
             st.dataframe(df_final.head(50))
         else:
-            st.error("❌ Não foi possível ler o arquivo. O formato parece ser incompatível.")
+            st.error("Não foi possível processar os dados. Verifique o formato do arquivo.")
+
+st.sidebar.info("Este conversor aplica automaticamente as chaves de ID e os percentuais por linha.")
