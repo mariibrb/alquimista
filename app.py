@@ -118,13 +118,13 @@ def processar_relatorio_dominio_ret(file_buffer):
     return output.getvalue()
 
 # --- ÁREA VISUAL ---
-st.title("💖 AUDITORIA RET - ZONA ROSA")
+st.title("CONVERSOR - DEMONSTRATIVO DE CRÉDITO PRESUMIDO")
 
-upped_file = st.file_uploader("📥 Arraste o CSV nº 4 aqui para auditar", type=["csv"])
+upped_file = st.file_uploader("Arraste o CSV aqui para auditar", type=["csv"])
 
 if upped_file is not None:
     excel_out = processar_relatorio_dominio_ret(upped_file)
-    st.success("✅ Auditoria concluída com sucesso!")
+    st.success("✅ Conversão concluída com sucesso!")
     st.download_button(
         label="📥 BAIXAR EXCEL AJUSTADO",
         data=excel_out,
