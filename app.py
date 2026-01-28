@@ -4,41 +4,32 @@ import pdfplumber
 import io
 import re
 
-def processar_pdf_fiscal(pdf_file):
+def processar_pdf_aba_python(pdf_file):
     dados_finais = []
     percentual_atual = ""
     
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
-            # Extraímos as tabelas com configurações específicas para não perder colunas de valores
-            # A Domínio gera tabelas que o pdfplumber as vezes ignora sem esses ajustes
+            # Extraímos as tabelas com foco em capturar todas as colunas de valores
             tabelas = page.extract_tables({
                 "vertical_strategy": "text", 
                 "horizontal_strategy": "text",
-                "snap_tolerance": 3,
+                "snap_tolerance": 4,
             })
             
-            if not tabelas:
-                # Se não achar tabela, tentamos extrair o texto bruto para não te deixar na mão
-                texto_bruto = page.extract_text()
-                if texto_bruto:
-                    linhas_texto = texto_bruto.split('\n')
-                    tabelas = [[l.split()] for l in linhas_texto]
-
             for tabela in tabelas:
                 for row in tabela:
-                    # Limpeza de caracteres nulos e espaços
+                    # Limpeza de dados nulos
                     row_clean = [str(item).strip() if item else "" for item in row]
                     line_text = " ".join(row_clean)
                     
-                    # Ignora linhas totalmente vazias
-                    if not any(row_clean):
+                    if not any(row_clean) or "Página:" in line_text:
                         continue
 
-                    # Criamos a linha base com as 22 colunas da sua Aba Python
+                    # Criamos a linha base com 22 colunas (índices 0 a 21)
                     linha_excel = [""] * 22
 
-                    # 1. Captura o Percentual de Recolhimento (Ajuste Fino: 1,3)
+                    # 1. Captura o Percentual de Recolhimento (Ajuste: 1,3)
                     if "Percentual de recolhimento efetivo:" in line_text:
                         match = re.search(r"(\d+[\.,]\d+)", line_text)
                         if match:
@@ -47,47 +38,56 @@ def processar_pdf_fiscal(pdf_file):
                         dados_finais.append(linha_excel)
                         continue
 
-                    # 2. Captura o Cabeçalho da Linha 7 (Documento, Acumulador, etc.)
+                    # 2. Captura o Cabeçalho (Linha 7)
                     if "Documento" in line_text and "Acumulador" in line_text:
-                        # Mapeamos o cabeçalho para a primeira linha para você visualizar
-                        for i, col_name in enumerate(row_clean):
-                            if i < 22: linha_excel[i] = col_name
+                        # Mapeamos o cabeçalho conforme a estrutura da aba python
+                        linha_excel[0] = "Data"
+                        linha_excel[1] = "Documento"
+                        linha_excel[5] = "Acumulador"
+                        linha_excel[6] = "ID Único"
+                        linha_excel[7] = "Percentual"
+                        linha_excel[8] = "CFOP"
+                        linha_excel[10] = "Produto"
+                        linha_excel[12] = "Tipo do produto"
+                        linha_excel[13] = "Valor produto"
+                        linha_excel[14] = "Valor contábil"
+                        linha_excel[15] = "Base cálculo"
+                        linha_excel[16] = "Isentas"
+                        linha_excel[20] = "Valor ICMS"
                         dados_finais.append(linha_excel)
                         continue
 
-                    # 3. Identifica Linhas de Itens (Pela Data no início: DD/MM/AAAA)
+                    # 3. Identifica Linhas de Itens (Data: DD/MM/AAAA)
+                    # Exemplo no PDF: "02/01/2026", "1177", "5000", "6-106... Produto", "2", "142,00", etc.
                     if len(row_clean) >= 5 and re.match(r"\d{2}/\d{2}/\d{4}", row_clean[0]):
-                        # Extração Direta por Posição (Padrão Domínio RET)
-                        data_doc = row_clean[0]
-                        num_doc  = row_clean[1]
+                        data_original = row_clean[0]
+                        documento = row_clean[1]
                         acumulador = row_clean[2]
                         
-                        # O CFOP e o Produto as vezes vêm grudados na mesma célula no PDF
-                        cfop_prod = row_clean[3] if len(row_clean) > 3 else ""
-                        parts_cfop = cfop_prod.split('\n')
-                        cfop = parts_cfop[0].replace('-', '') if len(parts_cfop) > 0 else ""
-                        produto = parts_cfop[-1] if len(parts_cfop) > 1 else cfop_prod
+                        # Tratamento do CFOP e Produto que podem vir na mesma célula
+                        cfop_produto = row_clean[3] if len(row_clean) > 3 else ""
+                        cfop_match = re.match(r"^(\d-?\d{3})", cfop_produto)
+                        cfop = cfop_match.group(1).replace('-', '') if cfop_match else ""
+                        produto = cfop_produto.replace(cfop_match.group(0), "").strip() if cfop_match else cfop_produto
                         
-                        # Preenchimento seguindo a hierarquia da sua Aba Python
-                        linha_excel[0] = data_doc         # Coluna A
-                        linha_excel[1] = num_doc          # Coluna B
-                        linha_excel[5] = acumulador       # Coluna F
+                        # REGRAS DA MARIANA (Mapeamento exato de colunas):
+                        linha_excel[0] = data_original       # Col A
+                        linha_excel[1] = documento           # Col B
+                        linha_excel[5] = acumulador          # Col F
+                        linha_excel[6] = f"{documento}-{produto}" # Col G: ID Único
+                        linha_excel[7] = percentual_atual    # Col H: % com vírgula
+                        linha_excel[8] = cfop                # Col I: CFOP
+                        linha_excel[10] = produto            # Col K: Produto
                         
-                        # REGRA MARIANA: ID Único e Percentual
-                        linha_excel[6] = f"{num_doc}-{produto}" # Coluna G
-                        linha_excel[7] = percentual_atual       # Coluna H
-                        linha_excel[8] = cfop                   # Coluna I
-                        linha_excel[10] = produto               # Coluna K
-                        
-                        # Captura das Colunas de Valores (Base de Cálculo, Isentas, ICMS...)
-                        # Mapeamento dinâmico baseado no final da linha (onde ficam os valores)
+                        # Mapeamento das colunas de valores (conforme PDF original)
+                        # No PDF, após o produto temos: Tipo(4), V.Prod(5), V.Cont(6), Base(7), Isentas(8), ICMS(9)
                         if len(row_clean) >= 10:
-                            linha_excel[12] = row_clean[4]  # Tipo Produto
-                            linha_excel[13] = row_clean[5]  # Valor Produto
-                            linha_excel[14] = row_clean[6]  # Valor Contábil
-                            linha_excel[15] = row_clean[7]  # Base Cálculo
-                            linha_excel[16] = row_clean[8]  # Isentas
-                            linha_excel[20] = row_clean[9]  # Valor ICMS
+                            linha_excel[12] = row_clean[4]   # Col M: Tipo do produto
+                            linha_excel[13] = row_clean[5]   # Col N: Valor produto
+                            linha_excel[14] = row_clean[6]   # Col O: Valor contábil
+                            linha_excel[15] = row_clean[7]   # Col P: Base cálculo
+                            linha_excel[16] = row_clean[8]   # Col Q: Isentas
+                            linha_excel[20] = row_clean[9]   # Col U: Valor ICMS
                         
                         dados_finais.append(linha_excel)
                         continue
@@ -95,54 +95,53 @@ def processar_pdf_fiscal(pdf_file):
                     # 4. Tratamento de Totais
                     if "Total:" in line_text or "Total saídas:" in line_text:
                         linha_excel[0] = line_text
-                        linha_excel[5] = "-"
+                        linha_excel[5] = "-" # Sinal de total solicitado
                         linha_excel[7] = percentual_atual
-                        # Tenta pegar os valores do total que ficam no final da linha
-                        if len(row_clean) > 5:
-                            linha_excel[14] = row_clean[-4] # Total Contábil
-                            linha_excel[15] = row_clean[-3] # Total Base
-                            linha_excel[20] = row_clean[-1] # Total ICMS
+                        # Captura valores do total
+                        valores_total = [c for c in row_clean if "," in c]
+                        if len(valores_total) >= 3:
+                            linha_excel[14] = valores_total[-4] if len(valores_total) > 3 else ""
+                            linha_excel[15] = valores_total[-3]
+                            linha_excel[20] = valores_total[-1]
                         dados_finais.append(linha_excel)
                     else:
-                        # Mantém o restante (Cabeçalhos de página, etc.)
+                        # Mantém outras linhas (MIRAO, CNPJ, Competência)
                         linha_excel[0] = line_text
                         dados_finais.append(linha_excel)
 
     return pd.DataFrame(dados_finais)
 
 # --- Interface Streamlit ---
-st.set_page_config(page_title="PDF para Aba Python - Nascel", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="PDF para Aba Python", layout="wide", page_icon="⚖️")
 
-st.title("⚖️ Conversor Fiscal: PDF para Excel (Aba Python)")
-st.info("Foco: Recuperação de todas as colunas de valores e cabeçalhos iniciados na linha 7.")
+st.title("⚖️ Conversor Fiscal: PDF -> Excel (Padrão Aba Python)")
+st.markdown("### Analista: Mariana | Nascel Contabilidade")
 
 arquivo_pdf = st.file_uploader("Suba o PDF ORIGINAL da Domínio", type=["pdf"])
 
 if arquivo_pdf:
     try:
-        with st.spinner('Escaneando todas as colunas de valores...'):
-            df_final = processar_pdf_fiscal(arquivo_pdf)
+        with st.spinner('Construindo a Aba Python com ID Único e Valores...'):
+            df_final = processar_pdf_aba_python(arquivo_pdf)
             
             if not df_final.empty:
-                # Gerando Excel (.xlsx) real
+                # Criando Excel Real (.xlsx)
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     df_final.to_excel(writer, index=False, header=False, sheet_name='Aba Python')
                 
-                st.success("✅ Excel gerado com todas as colunas de valores!")
-                
+                st.success("✅ Excel gerado exatamente no seu padrão!")
                 st.download_button(
-                    label="📥 Baixar Planilha para Auditoria (.xlsx)",
+                    label="📥 Baixar Planilha (.xlsx)",
                     data=buffer.getvalue(),
-                    file_name=f"AUDITORIA_COMPLETA_{arquivo_pdf.name.split('.')[0]}.xlsx",
+                    file_name=f"ABA_PYTHON_{arquivo_pdf.name.split('.')[0]}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 
                 st.divider()
-                st.write("### 🔍 Conferência Visual (Verifique os Valores e o Cabeçalho)")
+                st.write("### 🔍 Conferência do Mapeamento de Colunas")
                 st.dataframe(df_final.head(100))
             else:
-                st.error("Não foi possível extrair os dados. O PDF está no formato original?")
-                
+                st.error("Erro: Não foi possível extrair dados deste PDF.")
     except Exception as e:
-        st.error(f"Erro ao processar: {e}")
+        st.error(f"Erro técnico: {e}")
