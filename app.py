@@ -2,131 +2,119 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+import chardet
+
+def extrair_texto_com_seguranca(file_bytes):
+    """Detecta a codificação e limpa o texto do arquivo da Domínio."""
+    resultado = chardet.detect(file_bytes)
+    encoding = resultado['encoding'] if resultado['encoding'] else 'latin-1'
+    
+    try:
+        texto = file_bytes.decode(encoding, errors='ignore')
+    except:
+        texto = file_bytes.decode('latin-1', errors='ignore')
+    
+    # Remove caracteres nulos e lixo eletrônico que causam erro de leitura
+    texto_limpo = texto.replace('\x00', '').replace('\x01', '')
+    return texto_limpo
 
 def processar_relatorio_ret(file):
-    # Tenta ler o arquivo da Domínio de várias formas (XLS ou CSV)
-    content = file.getvalue()
-    df_input = None
-
-    # Tenta ler como Excel primeiro (formatos XLS ou XLSX)
-    try:
-        df_input = pd.read_excel(io.BytesIO(content), header=None, engine='xlrd')
-    except:
-        try:
-            df_input = pd.read_excel(io.BytesIO(content), header=None, engine='openpyxl')
-        except:
-            # Se falhar, tenta ler como CSV/Texto com diferentes codificações
-            for enc in ['utf-8', 'latin-1', 'cp1252', 'utf-16']:
-                try:
-                    text_content = content.decode(enc)
-                    # Detecta separador , ou ;
-                    sep = ';' if ';' in text_content.split('\n')[10] else ','
-                    df_input = pd.read_csv(io.StringIO(text_content), sep=sep, header=None, engine='python')
-                    break
-                except:
-                    continue
-
-    if df_input is None:
-        return None
-
+    conteudo_bruto = file.getvalue()
+    texto_limpo = extrair_texto_com_seguranca(conteudo_bruto)
+    
+    # Divide em linhas e tenta identificar o separador
+    lines = texto_limpo.split('\n')
+    if len(lines) < 2: return None
+    
     processed_rows = []
     current_percent = ""
 
-    # Transformamos o DataFrame em lista para processar linha a linha com precisão
-    # Mantendo a hierarquia e regras de agregação
-    data = df_input.fillna("").astype(str).values.tolist()
+    for line in lines:
+        if not line.strip(): continue
+        
+        # Divide por vírgula ou ponto-e-vírgula
+        parts = re.split(r'[,;]', line)
+        parts = [p.strip().replace('"', '') for p in parts]
+        line_str = " ".join(parts)
 
-    for row in data:
-        # Limpeza básica e identificação do conteúdo da linha
-        row_clean = [str(x).strip() for x in row]
-        line_full_text = " ".join(row_clean)
-
-        # 1. Identifica e "guarda" o Percentual de recolhimento da seção
-        if "Percentual de recolhimento efetivo:" in line_full_text:
-            match = re.search(r"(\d+[\.,]\d+)", line_full_text)
+        # 1. Captura o Percentual
+        if "Percentual de recolhimento efetivo:" in line_str:
+            match = re.search(r"(\d+[\.,]\d+)", line_str)
             if match:
                 current_percent = match.group(1).replace(',', '.')
-            processed_rows.append(row_clean)
+            processed_rows.append(parts)
             continue
 
         # 2. Identifica Linhas de Itens (Produtos)
-        # Verificamos se a primeira coluna parece uma data do Excel (ex: 46024.0)
         try:
-            primeira_celula = row_clean[0].replace('.0', '')
-            if primeira_celula.isdigit() and int(primeira_celula) > 40000:
-                doc = row_clean[1].replace('.0', '')
-                produto = row_clean[10]
+            # Verifica se a primeira coluna parece uma data/número do Excel
+            val_0 = parts[0].replace('.0', '')
+            if val_0.isdigit() and int(val_0) > 40000 and len(parts) > 10:
+                doc = parts[1].replace('.0', '')
+                produto = parts[10]
 
-                # Garante que a linha tenha colunas suficientes (padrão 22 colunas)
-                while len(row_clean) < 22: row_clean.append("")
+                # Garante que a linha tenha colunas suficientes (22 colunas)
+                while len(parts) < 22: parts.append("")
 
-                # REGRAS DA MARIANA (Aba Python):
+                # REGRAS DA MARIANA:
                 # Coluna G (índice 6): ID Único (Documento-Produto)
-                row_clean[6] = f"{doc}-{produto}"
+                parts[6] = f"{doc}-{produto}"
                 # Coluna H (índice 7): Percentual replicado
-                row_clean[7] = current_percent
+                parts[7] = current_percent
                 
-                processed_rows.append(row_clean)
+                processed_rows.append(parts)
                 continue
-        except (ValueError, IndexError):
+        except:
             pass
 
-        # 3. Tratamento de Linhas de Total e Sub-totais
-        if "Total:" in line_full_text or "Total saídas:" in line_full_text:
-            while len(row_clean) < 22: row_clean.append("")
-            # Coluna F (índice 5): Adiciona o "-" conforme solicitado
-            row_clean[5] = "-"
-            # Coluna H (índice 7): Adiciona o percentual da seção
-            row_clean[7] = current_percent
-            processed_rows.append(row_clean)
+        # 3. Tratamento de Totais
+        if "Total:" in line_str or "Total saídas:" in line_str:
+            while len(parts) < 22: parts.append("")
+            parts[5] = "-"
+            parts[7] = current_percent
+            processed_rows.append(parts)
         else:
-            # Mantém as demais linhas (cabeçalhos, apuração geral, etc) íntegras
-            processed_rows.append(row_clean)
+            processed_rows.append(parts)
 
     return pd.DataFrame(processed_rows)
 
 # --- Interface Streamlit ---
-st.set_page_config(page_title="Conversor RET Nascel", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="Conversor RET Nascel", layout="wide")
 
-st.title("⚖️ Conversor de Relatório RET (Domínio -> Python)")
-st.markdown("""
-**Instruções:**
-1. Carregue o arquivo XLS ou CSV do relatório de Crédito Presumido.
-2. O sistema aplicará as regras de ID Único e repetição de Percentuais.
-3. O download será um arquivo **Excel (.xlsx)** pronto para análise.
-""")
+st.title("⚖️ Conversor de Relatório RET (Versão Blindada)")
+st.info("Esta versão detecta automaticamente a codificação do arquivo da Domínio para evitar erros de leitura.")
 
-# Removida restrição de tipo para evitar erros de MIME type do Windows
-uploaded_file = st.file_uploader("Arraste o arquivo da Domínio aqui", type=None)
+uploaded_file = st.file_uploader("Arraste o arquivo XLS ou CSV da Domínio aqui", type=None)
 
 if uploaded_file:
     try:
-        with st.spinner('Processando regras fiscais e gerando Excel...'):
+        with st.spinner('Limpando e processando dados...'):
             df_result = processar_relatorio_ret(uploaded_file)
             
-            if df_result is not None:
-                # Criando o arquivo Excel real em memória
+            if df_result is not None and not df_result.empty:
+                # Gerando o EXCEL REAL (.xlsx)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     df_result.to_excel(writer, index=False, header=False, sheet_name='Aba Python')
                 
-                st.success("✅ Conversão concluída com sucesso!")
+                st.success("✅ Conversão concluída!")
                 
-                # Botão de Download para o formato EXCEL (.xlsx)
                 st.download_button(
-                    label="📥 Baixar Planilha de Auditoria (.xlsx)",
+                    label="📥 Baixar Planilha Excel (.xlsx)",
                     data=output.getvalue(),
-                    file_name=f"AUDITORIA_RET_{uploaded_file.name.split('.')[0]}.xlsx",
+                    file_name=f"AUDITORIA_{uploaded_file.name.split('.')[0]}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 
-                # Conferência visual rápida
                 st.divider()
-                st.write("### 🔍 Prévia dos Dados Processados")
+                st.write("### 🔍 Prévia Visual (Colunas G e H)")
                 st.dataframe(df_result.head(100))
             else:
-                st.error("Não foi possível decifrar o conteúdo do arquivo. Verifique se ele não está corrompido.")
-
+                st.error("Não consegui extrair dados do arquivo. Ele pode estar vazio ou em um formato binário incompatível.")
     except Exception as e:
-        st.error(f"Ocorreu um erro técnico: {e}")
-        st.info("Dica: Certifique-se de que o arquivo não está aberto em outro programa durante o upload.")
+        st.error(f"Erro técnico: {e}")
+
+st.sidebar.markdown("---")
+st.sidebar.write("📌 **Foco:** Analista Fiscal Mariana")
+st.sidebar.write("✅ Geração de ID Único")
+st.sidebar.write("✅ Replicação de Percentual")
