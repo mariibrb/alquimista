@@ -65,7 +65,7 @@ def aplicar_estilo_sentinela_zonas():
     """, unsafe_allow_html=True)
 
 # --- CONFIGURAÇÃO E INTERFACE ---
-st.set_page_config(page_title="Conversor Relatório RET", layout="wide")
+st.set_page_config(page_title="⚙️ Conversor Relatório RET", layout="wide")
 aplicar_estilo_sentinela_zonas()
 
 def processar_relatorio_dominio_ret(file_buffer):
