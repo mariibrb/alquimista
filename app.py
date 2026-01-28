@@ -5,8 +5,8 @@ import re
 
 def processar_relatorio_dominio_ret(file_buffer):
     """
-    Processa o RET mantendo o limite de colunas original do CSV.
-    Replica a alíquota na Coluna J e mantém o Produto na Coluna K.
+    Processa o RET mantendo a integridade absoluta das colunas originais.
+    Removeu-se a replicação automática da alíquota para preenchimento manual posterior.
     """
     try:
         # Lendo o CSV com separador ';'
@@ -15,55 +15,35 @@ def processar_relatorio_dominio_ret(file_buffer):
         file_buffer.seek(0)
         df = pd.read_csv(file_buffer, sep=None, engine='python', dtype=str, header=None)
 
-    # Identificamos quantas colunas o arquivo original realmente tem
     total_colunas_originais = len(df.columns)
-    
-    percentual_atual = ""
     linhas_finais = []
-    
-    # Regex para capturar alíquota (ex: 4,00)
-    padrao_aliquota = re.compile(r'(\d+,\d+)')
 
     for index, row in df.iterrows():
         linha = row.tolist()
-        linha_texto = " ".join([str(x) for x in linha if pd.notna(x)])
-
-        # 1. IDENTIFICAÇÃO DINÂMICA DO PERCENTUAL
-        if "recolhimento efetivo" in linha_texto.lower() or "Percentual de" in linha_texto:
-            busca = padrao_aliquota.search(linha_texto)
-            if busca:
-                percentual_atual = busca.group(1)
-
-        # 2. REPLICAÇÃO NA COLUNA J (Índice 9)
-        # Verificamos se a coluna J existe antes de tentar gravar
-        if total_colunas_originais > 9:
-            linha[9] = percentual_atual
-
-        # 3. MANUTENÇÃO DO PRODUTO (Índice 10 / Coluna K)
-        # Não criamos coluna de concatenação ao final para não exceder o limite original.
-        # Caso precise da concatenação, ela deve substituir uma coluna existente 
-        # ou ser feita por você manualmente depois, como você mencionou.
+        
+        # A lógica de replicação automática na Coluna J (linha[9]) foi removida.
+        # Agora o código apenas mantém o que já veio no arquivo original.
         
         linhas_finais.append(linha)
 
-    # Criando DataFrame final com o mesmo número de colunas do original
+    # Criando DataFrame final com o layout original
     df_final = pd.DataFrame(linhas_finais)
 
     # Exportação para Excel
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # index=False e header=False para não criar linhas/colunas extras
         df_final.to_excel(writer, index=False, header=False, sheet_name='RET_Auditado')
         
         workbook = writer.book
         worksheet = writer.sheets['RET_Auditado']
         format_texto = workbook.add_format({'align': 'left'})
         
-        # Ajuste de largura apenas nas colunas que já existem
+        # Mantendo apenas o ajuste visual para facilitar seu trabalho manual
         if total_colunas_originais > 10:
             worksheet.set_column(8, 8, 12, format_texto)  # CFOP
-            worksheet.set_column(9, 9, 10, format_texto)  # Alíquota (Coluna J)
-            worksheet.set_column(10, 10, 40, format_texto) # Produto (Coluna K)
+            worksheet.set_column(9, 9, 12, format_texto)  # Espaço para sua Alíquota
+            worksheet.set_column(10, 10, 45, format_texto) # Produto
+            worksheet.set_column(0, total_colunas_originais - 1, None, format_texto)
 
     return output.getvalue()
 
@@ -77,11 +57,11 @@ if upped_file is not None:
     with st.spinner("Processando..."):
         try:
             excel_out = processar_relatorio_dominio_ret(upped_file)
-            st.success("Arquivo processado! Estrutura original de colunas mantida.")
+            st.success("Arquivo pronto! Agora você pode informar os percentuais onde desejar.")
             st.download_button(
-                label="📥 Baixar Excel Ajustado",
+                label="📥 Baixar Excel para Preenchimento",
                 data=excel_out,
-                file_name="RET_Dominio_Original_Colunas.xlsx",
+                file_name="RET_Dominio_Limpo.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
