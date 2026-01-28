@@ -3,98 +3,86 @@ import pandas as pd
 import io
 import re
 
-def process_raw_data(string_data):
-    """Processa o texto puro seguindo as regras da Mariana (ID e Percentual)"""
-    lines = string_data.split('\n')
-    processed_lines = []
+def process_dominio_logic(df):
+    """Aplica as regras da Mariana em um DataFrame já extraído do Excel"""
+    processed_rows = []
     current_percent = None
     
-    for line in lines:
-        line = line.replace('\r', '').strip()
-        if not line: continue
-        
-        parts = line.split(',')
-        # Se não houver vírgula, tenta ponto e vírgula (comum em CSVs brasileiros)
-        if len(parts) < 5:
-            parts = line.split(';')
-            
-        parts = [p.strip() for p in parts]
+    # Transformamos o DataFrame em lista de listas para processar linha a linha
+    data = df.values.tolist()
+    
+    for row in data:
+        # Converte tudo para string e limpa espaços
+        parts = [str(item).strip() if pd.notna(item) else "" for item in row]
+        line_full = " ".join(parts)
         
         # 1. Identifica o Percentual
-        if "Percentual de recolhimento efetivo:" in line:
-            match = re.search(r"(\d+\.?\d*)", line)
+        if "Percentual de recolhimento efetivo:" in line_full:
+            match = re.search(r"(\d+\.?\d*)", line_full)
             if match:
                 current_percent = match.group(1)
-            processed_lines.append(line)
+            processed_rows.append(parts)
             continue
 
-        # 2. Processa linhas de Produtos
+        # 2. Processa linhas de Produtos (Hierarquia Fiscal)
         try:
-            # Verifica se a primeira coluna é a data (formato numérico ou string)
-            if parts[0] and len(parts) > 10:
-                doc = parts[1]
+            # Verifica se a primeira coluna parece uma data/número da Domínio
+            # O Excel converte datas em números (ex: 46024.0)
+            val_0 = parts[0].replace('.0', '')
+            if val_0.isdigit() and float(val_0) > 40000 and len(parts) > 10:
+                doc = parts[1].replace('.0', '') # Remove o .0 do número da nota
                 prod_desc = parts[10]
                 
-                # Criando o ID: Documento-Produto (Índice 6)
+                # Criando o ID: Documento-Produto (Coluna G / Índice 6)
                 parts[6] = f"{doc}-{prod_desc}"
-                # Inserindo o Percentual (Índice 7)
+                # Inserindo o Percentual (Coluna H / Índice 7)
                 parts[7] = current_percent if current_percent else ""
                 
-                processed_lines.append(",".join(parts))
+                processed_rows.append(parts)
                 continue
         except (ValueError, IndexError):
             pass
 
-        # 3. Totais e Cabeçalhos
-        if "Total:" in line or "DÉBITOS PELAS SAÍDAS" in line:
+        # 3. Totais e Outras Linhas
+        if "Total:" in line_full or "DÉBITOS PELAS SAÍDAS" in line_full:
             if len(parts) > 7:
                 parts[5] = "-"
                 parts[7] = current_percent if current_percent else ""
-            processed_lines.append(",".join(parts))
+            processed_rows.append(parts)
         else:
-            processed_lines.append(line)
+            processed_rows.append(parts)
             
-    return "\n".join(processed_lines)
+    # Converte de volta para CSV
+    output_df = pd.DataFrame(processed_rows)
+    return output_df.to_csv(index=False, header=False)
 
-# --- Interface Streamlit ---
+# --- Interface ---
 st.set_page_config(page_title="Conversor RET Domínio", layout="wide")
-st.title("📂 Conversor RET - Direto da Domínio")
+st.title("📊 Conversor RET - Formato Binário (XLS)")
 
-uploaded_file = st.file_uploader("Suba o arquivo EXATAMENTE como saiu do sistema", type=None)
+uploaded_file = st.file_uploader("Suba o arquivo .xls gerado pela Domínio", type=["xls"])
 
 if uploaded_file is not None:
     try:
-        # Pega os bytes do arquivo
-        content = uploaded_file.getvalue()
+        # Lê o arquivo binário direto usando xlrd (específico para esse erro que deu)
+        # engine='xlrd' é o segredo para arquivos que começam com ÐÏà¡±
+        df_raw = pd.read_excel(uploaded_file, engine='xlrd', header=None)
         
-        # ESTRATÉGIA DE LEITURA:
-        # 1. Tenta ler como texto puro (Se for o CSV 'disfarçado')
-        try:
-            raw_text = content.decode('utf-8')
-        except:
-            try:
-                raw_text = content.decode('latin-1')
-            except:
-                # 2. Se falhar, tenta forçar a leitura como uma tabela (se for o falso XLS)
-                df_temp = pd.read_html(io.BytesIO(content))[0]
-                raw_text = df_temp.to_csv(index=False)
-
-        # Processa as regras da Mariana
-        result = process_raw_data(raw_text)
+        # Processa com a lógica da Mariana
+        result_csv = process_dominio_logic(df_raw)
         
-        st.success("✅ Arquivo reconhecido e processado!")
+        st.success("✅ Arquivo binário convertido com sucesso!")
         
         st.download_button(
-            label="📥 Baixar Relatório Formatado",
-            data=result,
-            file_name=f"FINAL_{uploaded_file.name}.csv",
+            label="📥 Baixar CSV para Python",
+            data=result_csv,
+            file_name=f"CONVERTIDO_{uploaded_file.name.replace('.xls', '.csv')}",
             mime="text/csv"
         )
         
-        st.text_area("Prévia do arquivo convertido:", value=result[:2000], height=300)
+        st.write("### 🔍 Prévia dos dados convertidos")
+        st.dataframe(df_raw.head(20)) # Mostra como o Python está "enxergando" o Excel
 
     except Exception as e:
-        st.error(f"Erro ao interpretar o formato da Domínio: {e}")
-        st.info("Este erro ocorre porque o sistema exporta um arquivo que não é um Excel padrão. Tentei converter automaticamente, mas o formato é muito específico.")
-
-st.sidebar.warning("⚠️ Não é necessário abrir o arquivo no Excel antes de subir.")
+        st.error(f"Erro ao ler o Excel binário: {e}")
+        st.info("O arquivo parece ser um XLS antigo. Certifique-se de que o 'xlrd' está no requirements.txt.")
