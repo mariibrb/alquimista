@@ -83,11 +83,12 @@ def aplicar_estilo_sentinela_zonas():
 aplicar_estilo_sentinela_zonas()
 
 def processar_relatorio_dominio_ret(file_buffer):
+    # Lendo com skipinitialspace=False para garantir que espaços internos e finais não sejam ignorados
     try:
-        df = pd.read_csv(file_buffer, sep=';', encoding='latin-1', dtype=str, header=None)
+        df = pd.read_csv(file_buffer, sep=';', encoding='latin-1', dtype=str, header=None, skipinitialspace=False)
     except Exception:
         file_buffer.seek(0)
-        df = pd.read_csv(file_buffer, sep=None, engine='python', dtype=str, header=None)
+        df = pd.read_csv(file_buffer, sep=None, engine='python', dtype=str, header=None, skipinitialspace=False)
 
     percentual_atual = ""
     col_index_aliquota = None
@@ -113,12 +114,12 @@ def processar_relatorio_dominio_ret(file_buffer):
                 linha[col_index_aliquota] = percentual_atual
 
             if len(linha) > 10:
-                # Captura literal das células sem qualquer tratamento de limpeza
+                # Captura bruta sem NENHUM processamento de string (sem strip, sem replace)
                 v_b = str(linha[1]) if pd.notna(linha[1]) else ""
                 v_k = str(linha[10]) if pd.notna(linha[10]) else ""
                 
-                # Concatenação crua para manter o hífen e o espaço final da célula
-                linha[6] = v_b + "-" + v_k
+                # Concatenação literal: Nota + Hífen separador + Produto (com seu espaço e hífen final)
+                linha[6] = f"{v_b}-{v_k}"
 
         linhas_finais.append(linha)
 
@@ -133,16 +134,15 @@ def processar_relatorio_dominio_ret(file_buffer):
         
         total_cols = len(df_final.columns)
         if total_cols > 10:
-            worksheet.set_column(6, 6, 60, format_texto)   # Coluna G (Largura aumentada para garantir visualização)
-            worksheet.set_column(8, 8, 12, format_texto)   # Coluna I
-            worksheet.set_column(10, 10, 60, format_texto) # Coluna K
+            worksheet.set_column(6, 6, 60, format_texto)   
+            worksheet.set_column(8, 8, 12, format_texto)   
+            worksheet.set_column(10, 10, 60, format_texto) 
             
     return output.getvalue()
 
 # --- ÁREA VISUAL ---
 st.title("CONVERSOR - DEMONSTRATIVO DE CRÉDITO PRESUMIDO")
 
-# --- SEÇÃO DE MANUAL E RESUMO ---
 with st.container():
     col1, col2 = st.columns(2)
     
@@ -164,9 +164,9 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📊 O que será obtido?</h3>
             <ul>
-                <li><b>Alíquotas Automatizadas:</b> O sistema identifica o "Percentual de recolhimento efetivo" e preenche automaticamente nas linhas de movimento.</li>
-                <li><b>Concatenação Inteligente:</b> União das colunas de descrição e códigos para melhor visualização.</li>
-                <li><b>Formatação Excel:</b> Arquivo .xlsx pronto para análise, com colunas ajustadas e sem erros de leitura de caracteres (UTF-8/Latin-1).</li>
+                <li><b>Alíquotas Automatizadas:</b> Preenchimento automático baseado no percentual efetivo.</li>
+                <li><b>Concatenação Íntegra:</b> Nota + Produto preservando espaços e hífens originais.</li>
+                <li><b>Formatação Excel:</b> Colunas largas para evitar cortes visuais.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
