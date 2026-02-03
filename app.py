@@ -116,7 +116,7 @@ def processar_relatorio_dominio_ret(file_buffer):
                 v_b = str(linha[1]) if pd.notna(linha[1]) and str(linha[1]) != "nan" else ""
                 v_k = str(linha[10]) if pd.notna(linha[10]) and str(linha[10]) != "nan" else ""
                 
-                # Ajuste: Apenas concatena Nota + Hífen + Produto integral (sem strip)
+                # A única coisa inserida além do conteúdo original é o "-" entre v_b e v_k
                 linha[6] = f"{v_b}-{v_k}"
 
         linhas_finais.append(linha)
@@ -132,7 +132,7 @@ def processar_relatorio_dominio_ret(file_buffer):
         
         total_cols = len(df_final.columns)
         if total_cols > 10:
-            worksheet.set_column(6, 6, 35, format_texto)   # Coluna G
+            worksheet.set_column(6, 6, 45, format_texto)   # Coluna G
             worksheet.set_column(8, 8, 12, format_texto)   # Coluna I
             worksheet.set_column(10, 10, 45, format_texto) # Coluna K
             
