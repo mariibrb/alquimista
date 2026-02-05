@@ -116,13 +116,16 @@ def processar_relatorio_dominio_ret(file_buffer):
 
             # Concatenação literal do conteúdo das células
             if len(linha) > 10:
-                # Nota Fiscal (v_b) e Produto (v_k) capturados sem NENHUM processamento de string
+                # Nota Fiscal (v_b) e Produto (v_k) capturados
                 v_b = str(linha[1]) if pd.notna(linha[1]) else ""
                 v_k = str(linha[10]) if pd.notna(linha[10]) else ""
                 
-                # O "-" entre as variáveis é o único caractere adicionado manualmente.
-                # O hífen que pertence ao código do produto em v_k será preservado.
-                linha[6] = v_b + "-" + v_k
+                # ALTERAÇÃO: Remove APENAS os espaços. Hifens originais (se existirem) são mantidos.
+                v_b = v_b.replace(" ", "")
+                v_k = v_k.replace(" ", "")
+                
+                # ALTERAÇÃO: Concatena direto, sem adicionar separador extra.
+                linha[6] = v_b + v_k
 
         linhas_finais.append(linha)
 
@@ -165,7 +168,7 @@ with st.container():
             <h3>📊 O que será obtido?</h3>
             <ul>
                 <li><b>Alíquotas Automatizadas:</b> Preenchimento do percentual de recolhimento efetivo.</li>
-                <li><b>Concatenação Íntegra:</b> Nota + Produto mantendo cada caractere original da célula.</li>
+                <li><b>Concatenação Íntegra:</b> Nota + Produto (Sem espaços, mantendo hifens originais).</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
