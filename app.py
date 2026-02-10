@@ -6,7 +6,7 @@ import re
 # --- CONFIGURAÇÃO E INTERFACE ---
 st.set_page_config(
     page_title="ALQUIMISTA", 
-    page_icon="⚙️", 
+    page_icon="🧪", 
     layout="wide"
 )
 
