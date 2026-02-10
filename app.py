@@ -5,7 +5,7 @@ import re
 
 # --- CONFIGURAÇÃO E INTERFACE ---
 st.set_page_config(
-    page_title="Conversor Relatorio", 
+    page_title="ALQUIMISTA", 
     page_icon="⚙️", 
     layout="wide"
 )
